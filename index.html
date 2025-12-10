@@ -54,6 +54,12 @@
         .tooltip-text { visibility:hidden; width:210px; background:#333; color:#fff; text-align:center; border-radius:6px; padding:8px; position:absolute; z-index:1; bottom:125%; left:50%; margin-left:-105px; font-size:0.85rem; opacity:0; transition:opacity .2s; }
         .info-tooltip:hover .tooltip-text { visibility:visible; opacity:1; }
         .notification { position:fixed; top:20px; right:20px; z-index:1200; padding:12px 16px; color:white; border-radius:8px; box-shadow:0 6px 18px rgba(0,0,0,0.18); }
+        /* debug panel */
+        #debugPanel {
+            position:fixed; left:20px; bottom:20px; background:rgba(0,0,0,0.75); color:white; padding:12px; border-radius:8px;
+            max-width:380px; max-height:40vh; overflow:auto; font-size:12px; display:none; z-index:2000;
+        }
+        #debugPanel pre { white-space:pre-wrap; word-break:break-word; color:#fff; margin:0; font-size:12px; }
     </style>
 </head>
 <body>
@@ -95,7 +101,7 @@
                     </div>
 
                     <div class="form-group">
-                        <!-- SOWN is now a month selector (1-12) -->
+                        <!-- SOWN is month selector (1-12) -->
                         <label for="sown" id="seasonLabel">बुवाई माह (1–12)
                             <i class="fas fa-info-circle info-tooltip">
                                 <span class="tooltip-text" id="seasonTooltip">आप किस महीने बुवाई कर रहे हैं? (1 = जनवरी, 12 = दिसंबर)</span>
@@ -169,6 +175,9 @@
             </div>
         </div>
     </div>
+
+    <!-- debug panel (hidden by default) -->
+    <div id="debugPanel" aria-hidden="true"><pre id="debugPre"></pre></div>
 
     <script>
         // Language system
@@ -272,7 +281,8 @@
                 soilTypes: '/api/soil-types',
                 weatherData: '/api/weather',
                 cropPrediction: '/api/predict-crop',
-                health: '/health'
+                health: '/health',
+                debugEncoders: '/api/debug/encoders'
             }
         };
 
@@ -302,6 +312,9 @@
             }
             static async predictCrop(payload) {
                 return await this.makeRequest(API_CONFIG.endpoints.cropPrediction, { method:'POST', body: JSON.stringify(payload) });
+            }
+            static async getDebugEncoders() {
+                return await this.makeRequest(API_CONFIG.endpoints.debugEncoders);
             }
             static async getUserLocation() {
                 return new Promise((resolve, reject) => {
@@ -377,7 +390,7 @@
             `;
         }
 
-        function showErrorMessage(message) {
+        function showErrorMessage(message, backendDetail) {
             document.getElementById('resultsContainer').innerHTML = `
                 <div class="result-card" style="border-left-color:#f44336;">
                     <div class="result-title" style="color:#f44336;"><i class="fas fa-exclamation-triangle"></i> Error</div>
@@ -385,36 +398,57 @@
                     <div class="result-subtitle">Please check your backend and try again</div>
                 </div>
             `;
+            // If backend returns a hint, fetch and display debug encoders (dev-only debug panel)
+            if (backendDetail) {
+                openDebugPanelWithEncoders();
+            }
         }
 
-        // Load soil types from backend (if available). If backend fails, keep existing hardcoded options.
-        async function loadSoilTypes() {
+        // Populate soil select from backend tokens. Falls back to built-in options on failure.
+        async function populateSoilFromServer() {
             try {
                 const resp = await BackendAPI.getSoilTypes();
-                if (resp.success && resp.data) {
-                    // backend returns { soil_types: [...] } or an array
-                    const list = Array.isArray(resp.data) ? resp.data : resp.data.soil_types;
-                    if (Array.isArray(list) && list.length) {
-                        const soilSelect = document.getElementById('soil');
-                        const placeholder = soilSelect.querySelector('#soilPlaceholder');
-                        soilSelect.innerHTML = '';
-                        if (placeholder) soilSelect.appendChild(placeholder);
-                        list.forEach(item => {
-                            let value, text;
-                            if (typeof item === 'string') { value = item; text = item; }
-                            else { value = item.code || item.id || (item.name_en || item.name); text = (item.name_hi ? item.name_hi + ' | ' : '') + (item.name_en || item.name); }
-                            const opt = document.createElement('option'); opt.value = value; opt.textContent = text; soilSelect.appendChild(opt);
-                        });
-                        return;
-                    }
-                } else {
-                    // backend failed — notify user but keep fallback options visible
-                    console.warn('Soil types fetch failed:', resp.error || resp);
-                    showNotification('Could not load soil types from backend. Using built-in list.', 'warning');
+                if (!resp.success || !resp.data) {
+                    console.warn('Could not load soil types:', resp.error || resp);
+                    return;
                 }
+                // resp.data may be { soil_types: [...] } or an array
+                const list = Array.isArray(resp.data) ? resp.data : (resp.data.soil_types || []);
+                if (!list || !list.length) return;
+                const soilSelect = document.getElementById('soil');
+                const placeholder = soilSelect.querySelector('#soilPlaceholder');
+                soilSelect.innerHTML = '';
+                if (placeholder) soilSelect.appendChild(placeholder);
+                list.forEach(item => {
+                    const tok = (typeof item === 'string') ? item : (item.code || item.id || item.name_en || item.name);
+                    const opt = document.createElement('option');
+                    opt.value = tok;
+                    // display a readable label if present
+                    opt.textContent = (typeof item === 'string') ? tok : ((item.name_hi ? item.name_hi + ' | ' : '') + (item.name_en || item.name || tok));
+                    soilSelect.appendChild(opt);
+                });
+                console.info('Loaded soil tokens from backend:', list);
             } catch (err) {
-                console.error('Error loading soil types:', err);
-                showNotification('Soil types unavailable (backend error).', 'warning');
+                console.warn('Failed to load soil types, keeping built-in list.', err);
+            }
+        }
+
+        // Debug panel: fetch /api/debug/encoders and show it
+        async function openDebugPanelWithEncoders() {
+            try {
+                const resp = await BackendAPI.getDebugEncoders();
+                if (!resp.success) {
+                    console.warn('debug encoders fetch failed:', resp.error || resp);
+                    return;
+                }
+                const panel = document.getElementById('debugPanel');
+                const pre = document.getElementById('debugPre');
+                pre.textContent = JSON.stringify(resp.data, null, 2);
+                panel.style.display = 'block';
+                panel.setAttribute('aria-hidden', 'false');
+                console.debug('Backend encoders:', resp.data);
+            } catch (e) {
+                console.error('Failed to fetch debug encoders:', e);
             }
         }
 
@@ -424,7 +458,6 @@
                 const loc = await BackendAPI.getUserLocation();
                 const weatherResp = await BackendAPI.getWeatherData(loc.latitude, loc.longitude);
                 if (weatherResp.success && weatherResp.data) {
-                    // Try common shapes (open-meteo-like)
                     let temp = null, humidity = null;
                     const d = weatherResp.data;
                     if (d && d.hourly) {
@@ -460,7 +493,6 @@
             e.preventDefault();
 
             const soil = document.getElementById('soil').value;
-            // SOWN is now month number (1-12). Parse as integer.
             const sown = parseInt(document.getElementById('sown').value, 10);
             const soil_ph = parseFloat(document.getElementById('soil_ph').value);
             const temp = parseFloat(document.getElementById('temp').value);
@@ -474,11 +506,9 @@
                 return;
             }
 
-            // MAP to backend schema EXACTLY.
-            // Note: SOWN is sent as a number (1-12) per your instruction.
             const payload = {
                 SOIL: String(soil),
-                SOWN: Number(sown),               // month number 1..12
+                SOWN: Number(sown),
                 SOIL_PH: Number(soil_ph),
                 TEMP: Number(temp),
                 RELATIVE_HUMIDITY: Number(humidity),
@@ -492,21 +522,19 @@
                 const resp = await BackendAPI.predictCrop(payload);
 
                 if (!resp.success) {
-                    // Backend did not return a valid prediction — show error (no fallback)
                     const errMsg = resp.error || `Backend error (${resp.status || 'unknown'})`;
                     setLoading(false);
-                    showErrorMessage(errMsg);
+                    showErrorMessage(errMsg, resp);
                     return;
                 }
 
                 const data = resp.data;
                 if (!data || (typeof data !== 'object')) {
                     setLoading(false);
-                    showErrorMessage('Backend returned empty or invalid prediction.');
+                    showErrorMessage('Backend returned empty or invalid prediction.', null);
                     return;
                 }
 
-                // Expected fields: crop (object or string), water_source (object or string), crop_duration, water_required, optional confidence
                 const prediction = {
                     crop: (data.crop && (data.crop.label || data.crop)) || 'Unknown',
                     water_source: (data.water_source && (data.water_source.label || data.water_source)) || 'Unknown',
@@ -520,7 +548,7 @@
             } catch (err) {
                 console.error('Prediction flow error:', err);
                 setLoading(false);
-                showErrorMessage('Network or unexpected error while contacting backend.');
+                showErrorMessage('Network or unexpected error while contacting backend.', null);
             }
         });
 
@@ -539,7 +567,8 @@
                 const health = await BackendAPI.checkHealth();
                 if (health.success) {
                     showNotification('✅ Connected to Crop Sage AI Backend!', 'success');
-                    await loadSoilTypes();
+                    // populate exact soil tokens from server
+                    await populateSoilFromServer();
                 } else {
                     showNotification('⚠️ Backend unreachable — predictions will fail until backend is available', 'warning');
                 }
