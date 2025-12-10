@@ -95,16 +95,26 @@
                     </div>
 
                     <div class="form-group">
-                        <label for="sown" id="seasonLabel">बुवाई का मौसम
+                        <!-- SOWN is now a month selector (1-12) -->
+                        <label for="sown" id="seasonLabel">बुवाई माह (1–12)
                             <i class="fas fa-info-circle info-tooltip">
-                                <span class="tooltip-text" id="seasonTooltip">आप कब बुवाई करना चाहते हैं?</span>
+                                <span class="tooltip-text" id="seasonTooltip">आप किस महीने बुवाई कर रहे हैं? (1 = जनवरी, 12 = दिसंबर)</span>
                             </i>
                         </label>
                         <select id="sown" class="form-control" required aria-required="true">
-                            <option value="" id="seasonPlaceholder" disabled selected>मौसम चुनें</option>
-                            <option value="kharif">खरीफ | Kharif (मानसून)</option>
-                            <option value="rabi">रबी | Rabi (सर्दी)</option>
-                            <option value="zaid">जायद | Zaid (गर्मी)</option>
+                            <option value="" id="seasonPlaceholder" disabled selected>माह चुनें / Select month</option>
+                            <option value="1">जनवरी | January (1)</option>
+                            <option value="2">फ़रवरी | February (2)</option>
+                            <option value="3">मार्च | March (3)</option>
+                            <option value="4">अप्रैल | April (4)</option>
+                            <option value="5">मई | May (5)</option>
+                            <option value="6">जून | June (6)</option>
+                            <option value="7">जुलाई | July (7)</option>
+                            <option value="8">अगस्त | August (8)</option>
+                            <option value="9">सितंबर | September (9)</option>
+                            <option value="10">अक्टूबर | October (10)</option>
+                            <option value="11">नवम्बर | November (11)</option>
+                            <option value="12">दिसम्बर | December (12)</option>
                         </select>
                     </div>
 
@@ -172,9 +182,9 @@
                 soilLabel: "मिट्टी का प्रकार",
                 soilTooltip: "अपने खेत की मिट्टी का प्रकार चुनें",
                 soilPlaceholder: "मिट्टी चुनें",
-                seasonLabel: "बुवाई का मौसम",
-                seasonTooltip: "आप कब बुवाई करना चाहते हैं?",
-                seasonPlaceholder: "मौसम चुनें",
+                seasonLabel: "बुवाई माह (1–12)",
+                seasonTooltip: "आप किस महीने बुवाई कर रहे हैं? (1 = जनवरी, 12 = दिसंबर)",
+                seasonPlaceholder: "माह चुनें / Select month",
                 phLabel: "मिट्टी का pH",
                 tempLabel: "तापमान",
                 humidityLabel: "आर्द्रता",
@@ -201,9 +211,9 @@
                 soilLabel: "Soil Type",
                 soilTooltip: "Select the type of soil in your field",
                 soilPlaceholder: "Select Soil",
-                seasonLabel: "Sowing Season",
-                seasonTooltip: "When are you planning to sow?",
-                seasonPlaceholder: "Select Season",
+                seasonLabel: "Sowing Month (1–12)",
+                seasonTooltip: "Which month are you sowing? (1 = Jan, 12 = Dec)",
+                seasonPlaceholder: "Select month",
                 phLabel: "Soil pH",
                 tempLabel: "Temperature",
                 humidityLabel: "Humidity",
@@ -269,18 +279,14 @@
         class BackendAPI {
             static async makeRequest(endpoint, options = {}) {
                 const url = `${API_CONFIG.baseURL}${endpoint}`;
-                const defaultOptions = {
-                    headers: { 'Content-Type':'application/json', 'Accept':'application/json' }
-                };
+                const defaultOptions = { headers: { 'Content-Type':'application/json', 'Accept':'application/json' } };
                 try {
                     const resp = await fetch(url, { ...defaultOptions, ...options });
                     const text = await resp.text();
                     const data = text ? JSON.parse(text) : null;
                     if (!resp.ok) {
-                        // Return body detail if present, else statusText
                         return { success:false, status:resp.status, data, error: data?.detail || resp.statusText || `HTTP ${resp.status}` };
                     }
-                    // success
                     return { success:true, status:resp.status, data };
                 } catch (err) {
                     console.error('Network/API Error:', err);
@@ -454,7 +460,8 @@
             e.preventDefault();
 
             const soil = document.getElementById('soil').value;
-            const sown = document.getElementById('sown').value;
+            // SOWN is now month number (1-12). Parse as integer.
+            const sown = parseInt(document.getElementById('sown').value, 10);
             const soil_ph = parseFloat(document.getElementById('soil_ph').value);
             const temp = parseFloat(document.getElementById('temp').value);
             const humidity = parseFloat(document.getElementById('humidity').value);
@@ -462,14 +469,16 @@
             const phosphorus = parseFloat(document.getElementById('phosphorus').value);
             const potassium = parseFloat(document.getElementById('potassium').value);
 
-            if (!soil || !sown || isNaN(soil_ph) || isNaN(temp) || isNaN(humidity) || isNaN(nitrogen) || isNaN(phosphorus) || isNaN(potassium)) {
+            if (!soil || isNaN(sown) || isNaN(soil_ph) || isNaN(temp) || isNaN(humidity) || isNaN(nitrogen) || isNaN(phosphorus) || isNaN(potassium)) {
                 showNotification('कृपया सभी आवश्यक फ़ील्ड भरें / Please fill all required fields', 'warning');
                 return;
             }
 
+            // MAP to backend schema EXACTLY.
+            // Note: SOWN is sent as a number (1-12) per your instruction.
             const payload = {
                 SOIL: String(soil),
-                SOWN: String(sown),
+                SOWN: Number(sown),               // month number 1..12
                 SOIL_PH: Number(soil_ph),
                 TEMP: Number(temp),
                 RELATIVE_HUMIDITY: Number(humidity),
@@ -490,7 +499,6 @@
                     return;
                 }
 
-                // resp.success == true; validate returned payload
                 const data = resp.data;
                 if (!data || (typeof data !== 'object')) {
                     setLoading(false);
@@ -533,13 +541,11 @@
                     showNotification('✅ Connected to Crop Sage AI Backend!', 'success');
                     await loadSoilTypes();
                 } else {
-                    // Keep the app usable visually but do not attempt to simulate predictions.
                     showNotification('⚠️ Backend unreachable — predictions will fail until backend is available', 'warning');
-                    // still attempt to load soil types? we already tried and it failed; fallback options remain
                 }
             } catch (err) {
                 console.error('Init error:', err);
-                showNotification('🔄 Working in offline mode — backend unreachable', 'warning');
+                showNotification('🔄 Backend unreachable', 'warning');
             }
         }
 
